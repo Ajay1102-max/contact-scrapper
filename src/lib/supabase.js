@@ -4,7 +4,7 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Missing Supabase environment variables. Caching will be disabled.');
+  console.warn('Missing Supabase environment variables. Database storage will be disabled.');
 }
 
 export const supabase = supabaseUrl && supabaseAnonKey 
@@ -12,10 +12,10 @@ export const supabase = supabaseUrl && supabaseAnonKey
   : null;
 
 /**
- * Check cache for existing company contact data
+ * Check database for existing company contact data
  * @param {string} companyName - Company name (will be lowercased and trimmed)
  * @param {string} domain - Optional domain to filter by specific company
- * @returns {Promise<Array>} Array of cached data (can be multiple companies with same name)
+ * @returns {Promise<Array>} Array of stored data (can be multiple companies with same name)
  */
 export async function checkCache(companyName, domain = null) {
   if (!supabase) return [];
@@ -36,7 +36,7 @@ export async function checkCache(companyName, domain = null) {
     
     if (error || !data || data.length === 0) return [];
     
-    // Filter out expired cache entries (> 7 days old)
+    // Filter out old entries (> 7 days old)
     const now = new Date();
     const validData = data.filter(item => {
       const fetchedAt = new Date(item.fetched_at);
@@ -46,13 +46,13 @@ export async function checkCache(companyName, domain = null) {
     
     return validData;
   } catch (error) {
-    console.error('Cache check error:', error);
+    console.error('Database check error:', error);
     return [];
   }
 }
 
 /**
- * Save contact data to cache
+ * Save contact data to database
  * @param {string} companyName - Company name
  * @param {string} domain - Resolved domain
  * @param {Object} contactData - Extracted contact information
@@ -82,13 +82,13 @@ export async function saveToCache(companyName, domain, contactData) {
       .single();
     
     if (error) {
-      console.error('Failed to save to cache:', error);
+      console.error('Failed to save to database:', error);
       return contactData;
     }
     
     return data;
   } catch (error) {
-    console.error('Cache save error:', error);
+    console.error('Database save error:', error);
     return contactData;
   }
 }

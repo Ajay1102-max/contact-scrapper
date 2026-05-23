@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function ContactDashboard({ data, isCached = false }) {
+export default function ContactDashboard({ data, isFromDatabase = false }) {
   const hasAnyContact = 
     (data.email && data.email.length > 0) ||
     (data.phone && data.phone.length > 0) ||
@@ -13,12 +13,12 @@ export default function ContactDashboard({ data, isCached = false }) {
         <div className="bg-black text-white px-6 py-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-xl font-bold">Contact Information</h2>
-            {isCached && (
+            {isFromDatabase && (
               <span className="inline-flex items-center gap-2 px-3 py-1 bg-gray-700 text-white rounded-full text-sm">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
                 </svg>
-                Cached
+                From Database
               </span>
             )}
           </div>

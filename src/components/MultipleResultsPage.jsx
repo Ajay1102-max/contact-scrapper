@@ -49,12 +49,12 @@ export default function MultipleResultsPage({ results, searchQuery, onBack }) {
                       </svg>
                     </a>
                   </div>
-                  {result.cached && (
+                  {result.fromDatabase && (
                     <span className="inline-flex items-center gap-2 px-3 py-1 bg-white/20 text-white rounded-full text-sm flex-shrink-0 ml-4">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
                       </svg>
-                      Cached
+                      From Database
                     </span>
                   )}
                 </div>

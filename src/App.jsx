@@ -20,7 +20,7 @@ function App() {
   const [error, setError] = useState(null);
   const [currentStep, setCurrentStep] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isCached, setIsCached] = useState(false);
+  const [isFromDatabase, setIsFromDatabase] = useState(false);
   const [history, setHistory] = useState([]);
   
   // Multiple company selection state
@@ -62,7 +62,7 @@ function App() {
     setIsLoading(true);
     setError(null);
     setContactData(null);
-    setIsCached(false);
+    setIsFromDatabase(false);
     setSearchQuery(query);
     setShowCompanySelector(false);
     setShowMultipleResults(false);
@@ -71,96 +71,137 @@ function App() {
 
     try {
       if (isUrl) {
-        // Direct URL extraction (Phase 1 mode)
-        setCurrentStep('Fetching page content...');
-        const data = await extractContactsFromUrl(query);
-        setContactData(data);
+        // Direct URL extraction - find contact page and extract
+        setCurrentStep('Extracting contact information...');
+        
+        // Extract the domain from the URL for database lookup
+        let domain;
+        try {
+          const urlObj = new URL(query.startsWith('http') ? query : `https://${query}`);
+          domain = urlObj.hostname.replace(/^www\./, '');
+        } catch (e) {
+          domain = query.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0];
+        }
+        
+        // Check database first
+        const dbResults = await checkCache('', domain);
+        if (dbResults.length > 0) {
+          setContactData(dbResults[0]);
+          setIsFromDatabase(true);
+          await loadHistory();
+          setIsLoading(false);
+          return;
+        }
+        
+        // If not in database, find contact page and extract
+        setCurrentStep('Finding contact page...');
+        const candidateUrls = generateContactUrls(domain);
+        
+        // Try to find working contact page
+        let workingUrl;
+        try {
+          workingUrl = await findWorkingUrl(candidateUrls);
+        } catch (err) {
+          // If no contact page found, try the provided URL directly
+          console.log('No contact page found, trying provided URL:', query);
+          workingUrl = query.startsWith('http') ? query : `https://${query}`;
+        }
+        
+        setCurrentStep('Extracting contact information...');
+        const data = await extractContactsFromUrl(workingUrl);
+        
+        // Save to database with domain as company name
+        const savedData = await saveToCache(domain, domain, data);
+        setContactData(savedData);
+        await loadHistory();
+        setIsLoading(false);
+        return;
+      }
+      
+      // Company name search - Extract all matching results
+      
+      // Step 1: Check database
+      setCurrentStep('Checking database...');
+      const dbResults = await checkCache(query);
+      
+      if (dbResults.length === 1) {
+        // Single database result - show directly
+        setContactData(dbResults[0]);
+        setIsFromDatabase(true);
+        await loadHistory();
+        setIsLoading(false);
+        return;
+      } else if (dbResults.length > 1) {
+        // Multiple database results - show all with their data
+        setMultipleResults(dbResults.map(item => ({
+          domain: item.domain,
+          title: `${query} (${item.domain})`,
+          fromDatabase: true,
+          contactData: item,
+          snippet: ''
+        })));
+        setShowMultipleResults(true);
+        setIsLoading(false);
+        return;
+      }
+
+      // Step 2: Search for domains (can return multiple)
+      setCurrentStep(`Searching for ${query}'s website...`);
+      const companies = await searchCompanyDomains(query);
+
+      if (companies.length === 0) {
+        throw new Error('No results found for this company');
+      }
+
+      if (companies.length === 1) {
+        // Single result - extract and show directly
+        await processCompany(query, companies[0]);
       } else {
-        // Company name search - NEW FLOW: Extract all matching results
+        // Multiple results - extract contact info for ALL of them
+        setCurrentStep('Extracting contact information from all matches...');
+        const extractedResults = [];
         
-        // Step 1: Check cache
-        setCurrentStep('Checking cache...');
-        const cachedResults = await checkCache(query);
-        
-        if (cachedResults.length === 1) {
-          // Single cached result - show directly
-          setContactData(cachedResults[0]);
-          setIsCached(true);
-          await loadHistory();
-          setIsLoading(false);
-          return;
-        } else if (cachedResults.length > 1) {
-          // Multiple cached results - show all with their data
-          setMultipleResults(cachedResults.map(item => ({
-            domain: item.domain,
-            title: `${query} (${item.domain})`,
-            cached: true,
-            contactData: item,
-            snippet: ''
-          })));
-          setShowMultipleResults(true);
-          setIsLoading(false);
-          return;
-        }
-
-        // Step 2: Search for domains (can return multiple)
-        setCurrentStep(`Searching for ${query}'s website...`);
-        const companies = await searchCompanyDomains(query);
-
-        if (companies.length === 0) {
-          throw new Error('No results found for this company');
-        }
-
-        if (companies.length === 1) {
-          // Single result - extract and show directly
-          await processCompany(query, companies[0]);
-        } else {
-          // Multiple results - extract contact info for ALL of them
-          setCurrentStep('Extracting contact information from all matches...');
-          const extractedResults = [];
-          
-          for (let i = 0; i < companies.length; i++) {
-            const company = companies[i];
-            try {
-              setCurrentStep(`Extracting from ${company.domain} (${i + 1}/${companies.length})...`);
-              
-              // Generate candidate URLs
-              const candidateUrls = generateContactUrls(company.domain);
-              
-              // Find working URL
-              const workingUrl = await findWorkingUrl(candidateUrls);
-              
-              // Extract contacts
-              const data = await extractContactsFromUrl(workingUrl);
-              
-              // Save to cache
-              await saveToCache(query, company.domain, data);
-              
-              extractedResults.push({
-                domain: company.domain,
-                title: company.title,
-                cached: false,
-                contactData: data,
-                snippet: company.snippet
-              });
-            } catch (err) {
-              console.error(`Failed to extract from ${company.domain}:`, err);
-              // Still add to results but mark as failed
-              extractedResults.push({
-                domain: company.domain,
-                title: company.title,
-                cached: false,
-                contactData: null,
-                error: err.message,
-                snippet: company.snippet
-              });
-            }
+        for (let i = 0; i < companies.length; i++) {
+          const company = companies[i];
+          try {
+            setCurrentStep(`Extracting from ${company.domain} (${i + 1}/${companies.length})...`);
+            
+            // Generate candidate URLs
+            const candidateUrls = generateContactUrls(company.domain);
+            
+            // Find working URL
+            const workingUrl = await findWorkingUrl(candidateUrls);
+            
+            // Extract contacts
+            const data = await extractContactsFromUrl(workingUrl);
+            
+            // Save to database
+            await saveToCache(query, company.domain, data);
+            
+            extractedResults.push({
+              domain: company.domain,
+              title: company.title,
+              fromDatabase: false,
+              contactData: data,
+              snippet: company.snippet
+            });
+          } catch (err) {
+            console.error(`Failed to extract from ${company.domain}:`, err);
+            // Still add to results but mark as failed
+            extractedResults.push({
+              domain: company.domain,
+              title: company.title,
+              fromDatabase: false,
+              contactData: null,
+              error: err.message,
+              snippet: company.snippet
+            });
           }
-          
-          setMultipleResults(extractedResults);
-          setShowMultipleResults(true);
-          await loadHistory();
         }
+        
+        setMultipleResults(extractedResults);
+        setShowMultipleResults(true);
+        await loadHistory();
       }
     } catch (err) {
       console.error('Search error:', err);
@@ -177,10 +218,10 @@ function App() {
       setShowCompanySelector(false);
       setShowMultipleResults(false);
       
-      // If cached data is available
-      if (company.cached && company.data) {
+      // If database data is available
+      if (company.fromDatabase && company.data) {
         setContactData(company.data);
-        setIsCached(true);
+        setIsFromDatabase(true);
         await loadHistory();
         setIsLoading(false);
         return;
@@ -198,8 +239,8 @@ function App() {
       setCurrentStep('Extracting contact information...');
       const data = await extractContactsFromUrl(workingUrl);
 
-      // Step 6: Save to cache
-      setCurrentStep('Saving to cache...');
+      // Step 6: Save to database
+      setCurrentStep('Saving to database...');
       const savedData = await saveToCache(companyName, company.domain, data);
 
       setContactData(savedData);
@@ -243,19 +284,19 @@ function App() {
       setBulkProgress({ total: companyNames.length, completed: i, current: companyName });
 
       try {
-        // Check cache first
-        const cachedResults = await checkCache(companyName);
-        if (cachedResults.length > 0) {
-          const cached = cachedResults[0];
+        // Check database first
+        const dbResults = await checkCache(companyName);
+        if (dbResults.length > 0) {
+          const dbData = dbResults[0];
           results.push({
             company: companyName,
-            domain: cached.domain,
-            source_url: cached.source_url,
-            email: cached.email || [],
-            phone: cached.phone || [],
-            socials: cached.socials || {},
+            domain: dbData.domain,
+            source_url: dbData.source_url,
+            email: dbData.email || [],
+            phone: dbData.phone || [],
+            socials: dbData.socials || {},
             success: true,
-            cached: true
+            fromDatabase: true
           });
           setBulkResults([...results]);
           continue;
@@ -284,7 +325,7 @@ function App() {
         // Extract contacts
         const data = await extractContactsFromUrl(workingUrl);
         
-        // Save to cache
+        // Save to database
         await saveToCache(companyName, company.domain, data);
 
         results.push({
@@ -295,7 +336,7 @@ function App() {
           phone: data.phone || [],
           socials: data.socials || {},
           success: true,
-          cached: false
+          fromDatabase: false
         });
         setBulkResults([...results]);
 
@@ -394,7 +435,7 @@ function App() {
                   <p className="text-base md:text-lg text-gray-600">
                     {activeView === 'bulk' 
                       ? 'Upload a file with multiple company names' 
-                      : 'Enter a company name or contact page URL'}
+                      : 'Search by company name or extract from a specific URL'}
                   </p>
                 </header>
               )}
@@ -473,7 +514,7 @@ function App() {
                     </svg>
                     Back to Search
                   </button>
-                  <ContactDashboard data={contactData} isCached={isCached} />
+                  <ContactDashboard data={contactData} isFromDatabase={isFromDatabase} />
                 </div>
               )}
 

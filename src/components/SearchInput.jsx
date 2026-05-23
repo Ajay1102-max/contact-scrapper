@@ -8,8 +8,20 @@ export default function SearchInput({ onSearch, onBulkUpload, isLoading, showBul
     e.preventDefault();
     if (query.trim()) {
       // Detect if input is a URL or company name
-      const isUrl = query.trim().startsWith('http://') || query.trim().startsWith('https://');
-      onSearch(query.trim(), isUrl);
+      // Check for http://, https://, or domain patterns like example.com, www.example.com
+      const urlPattern = /^(https?:\/\/|www\.)/i;
+      const domainPattern = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?\.[a-zA-Z]{2,}$/;
+      
+      const trimmedQuery = query.trim();
+      const isUrl = urlPattern.test(trimmedQuery) || domainPattern.test(trimmedQuery);
+      
+      // If it looks like a domain but doesn't have protocol, add https://
+      let finalQuery = trimmedQuery;
+      if (isUrl && !trimmedQuery.startsWith('http')) {
+        finalQuery = 'https://' + trimmedQuery.replace(/^www\./, '');
+      }
+      
+      onSearch(finalQuery, isUrl);
     }
   };
 
@@ -78,7 +90,7 @@ export default function SearchInput({ onSearch, onBulkUpload, isLoading, showBul
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Enter company name (e.g., Tesla) or URL"
+              placeholder="Company name (Tesla) or URL (apollo.io)"
               className="w-full px-6 py-4 text-base md:text-lg bg-white text-gray-900 placeholder-gray-500 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-black/10 focus:border-black transition-all duration-300 shadow-lg hover:shadow-xl"
               disabled={isLoading}
               required
@@ -119,7 +131,7 @@ export default function SearchInput({ onSearch, onBulkUpload, isLoading, showBul
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <span>We'll automatically extract contact info from all matching websites</span>
+          <span>Enter a company name to find all websites, or a URL to extract from that specific page</span>
         </p>
       </div>
     </div>
