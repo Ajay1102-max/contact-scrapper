@@ -9,21 +9,25 @@ const SKIP_DOMAINS = [
   'youtube.com',
   'wikipedia.org',
   'indiamart.com',
-  'justdial.com'
+  'justdial.com',
+  'crunchbase.com',
+  'bloomberg.com',
+  'businesswire.com',
+  'prnewswire.com'
 ];
 
 /**
  * Search for company's official website using Tavily Search API
  * Returns multiple results to handle companies with same name
  * @param {string} companyName - Company name to search
- * @returns {Promise<Array>} Array of {domain, title, url} objects
+ * @returns {Promise<Array>} Array of {domain, title, url, snippet} objects
  */
 export async function searchCompanyDomains(companyName) {
   if (!TAVILY_API_KEY) {
     throw new Error('Missing VITE_TAVILY_API_KEY');
   }
 
-  const query = `${companyName} official website contact`;
+  const query = `"${companyName}" official website contact`;
   
   const response = await fetch('https://api.tavily.com/search', {
     method: 'POST',
@@ -33,9 +37,10 @@ export async function searchCompanyDomains(companyName) {
     },
     body: JSON.stringify({
       query,
-      max_results: 5,
+      max_results: 10,
       include_domains: [],
-      exclude_domains: SKIP_DOMAINS
+      exclude_domains: SKIP_DOMAINS,
+      search_depth: 'advanced'
     })
   });
   
@@ -52,25 +57,31 @@ export async function searchCompanyDomains(companyName) {
     throw new Error('No results found for this company');
   }
   
-  // Return multiple results (filter out aggregators)
+  // Return multiple results (filter out aggregators and duplicates)
   const results = [];
+  const seenDomains = new Set();
+  
   for (const result of data.results) {
     const domain = extractDomain(result.url);
     const isAggregator = SKIP_DOMAINS.some(skip => domain.includes(skip));
     
-    if (!isAggregator) {
+    if (!isAggregator && !seenDomains.has(domain)) {
+      seenDomains.add(domain);
       results.push({
         domain,
         title: result.title || domain,
-        url: result.url
+        url: result.url,
+        snippet: result.snippet || ''
       });
     }
   }
   
+  // Return at least the first result, or all unique results
   return results.length > 0 ? results : [{
     domain: extractDomain(data.results[0].url),
     title: data.results[0].title,
-    url: data.results[0].url
+    url: data.results[0].url,
+    snippet: data.results[0].snippet || ''
   }];
 }
 

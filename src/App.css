@@ -86,6 +86,15 @@ body {
   animation: fadeIn 0.5s ease-out;
 }
 
+/* Sidebar Layout */
+.flex {
+  display: flex;
+}
+
+.flex-1 {
+  flex: 1;
+}
+
 /* Cards and Containers */
 .bg-white {
   background-color: var(--primary-white) !important;
@@ -216,6 +225,39 @@ button[class*="bg-black"]:active {
   background-color: var(--medium-gray) !important;
 }
 
+/* Color variants for contact info */
+.bg-blue-100 {
+  background-color: #dbeafe !important;
+}
+
+.text-blue-900 {
+  color: #111e3f !important;
+}
+
+.border-blue-300 {
+  border-color: #93c5fd !important;
+}
+
+.bg-blue-200:hover {
+  background-color: #bfdbfe !important;
+}
+
+.bg-green-100 {
+  background-color: #dcfce7 !important;
+}
+
+.text-green-900 {
+  color: #14532d !important;
+}
+
+.border-green-300 {
+  border-color: #86efac !important;
+}
+
+.bg-green-200:hover {
+  background-color: #bbf7d0 !important;
+}
+
 /* Hover States */
 button:hover,
 a:hover {
@@ -288,6 +330,57 @@ button:disabled:hover {
   
   .bg-white:hover {
     transform: none;
+  }
+
+  /* Mobile hamburger button visibility */
+  .md\:hidden {
+    display: block !important;
+  }
+
+  /* Sidebar mobile styles */
+  aside {
+    box-shadow: 2px 0 15px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Main content padding on mobile */
+  main {
+    padding-top: 70px !important;
+  }
+
+  /* Mobile text sizes */
+  h1 {
+    font-size: 2rem !important;
+  }
+
+  h2 {
+    font-size: 1.5rem !important;
+  }
+
+  /* Mobile button sizes */
+  button {
+    font-size: 0.875rem;
+  }
+
+  /* Mobile input padding */
+  input[type="text"] {
+    padding: 0.75rem 1rem !important;
+  }
+}
+
+@media (min-width: 768px) {
+  /* Hide mobile hamburger on desktop */
+  .md\:hidden {
+    display: none !important;
+  }
+
+  /* Sidebar always visible on desktop */
+  aside {
+    transform: translateX(0) !important;
+  }
+
+  /* Main content has no top padding on desktop */
+  main {
+    padding-top: 3rem !important;
   }
 }
 
@@ -388,4 +481,12 @@ a:hover::after {
   .no-print {
     display: none !important;
   }
+}
+
+/* Line clamp utility */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }

@@ -4,8 +4,10 @@ import ExtractionStatus from './components/ExtractionStatus';
 import ContactDashboard from './components/ContactDashboard';
 import SearchHistory from './components/SearchHistory';
 import CompanySelector from './components/CompanySelector';
+import MultipleResultsPage from './components/MultipleResultsPage';
 import BulkProgress from './components/BulkProgress';
 import BulkResultsPage from './components/BulkResultsPage';
+import Sidebar from './components/Sidebar';
 import { extractContactsFromUrl } from './lib/extractor';
 import { searchCompanyDomains } from './lib/tavilySearch';
 import { generateContactUrls, findWorkingUrl } from './lib/urlPatterns';
@@ -25,6 +27,10 @@ function App() {
   const [companyOptions, setCompanyOptions] = useState([]);
   const [showCompanySelector, setShowCompanySelector] = useState(false);
   
+  // Multiple results page state - now shows all extracted results
+  const [multipleResults, setMultipleResults] = useState([]);
+  const [showMultipleResults, setShowMultipleResults] = useState(false);
+  
   // Bulk upload state
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
   const [bulkProgress, setBulkProgress] = useState({ total: 0, completed: 0, current: '' });
@@ -33,6 +39,10 @@ function App() {
   // Bulk results page state
   const [showBulkResults, setShowBulkResults] = useState(false);
   const [bulkResultsData, setBulkResultsData] = useState([]);
+  
+  // Sidebar and view state
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [activeView, setActiveView] = useState('single'); // 'single' or 'bulk'
 
   // Load search history on mount
   useEffect(() => {
@@ -55,6 +65,9 @@ function App() {
     setIsCached(false);
     setSearchQuery(query);
     setShowCompanySelector(false);
+    setShowMultipleResults(false);
+    setMultipleResults([]);
+    setSidebarOpen(false);
 
     try {
       if (isUrl) {
@@ -63,50 +76,98 @@ function App() {
         const data = await extractContactsFromUrl(query);
         setContactData(data);
       } else {
-        // Company name search (Phase 2 mode)
+        // Company name search - NEW FLOW: Extract all matching results
         
         // Step 1: Check cache
         setCurrentStep('Checking cache...');
         const cachedResults = await checkCache(query);
-        if (cachedResults.length > 0) {
-          if (cachedResults.length === 1) {
-            setContactData(cachedResults[0]);
-            setIsCached(true);
-            await loadHistory();
-            return;
-          } else {
-            // Multiple cached results - show selector
-            setCompanyOptions(cachedResults.map(item => ({
-              domain: item.domain,
-              title: `${query} (${item.domain})`,
-              cached: true,
-              data: item
-            })));
-            setShowCompanySelector(true);
-            setIsLoading(false);
-            return;
-          }
+        
+        if (cachedResults.length === 1) {
+          // Single cached result - show directly
+          setContactData(cachedResults[0]);
+          setIsCached(true);
+          await loadHistory();
+          setIsLoading(false);
+          return;
+        } else if (cachedResults.length > 1) {
+          // Multiple cached results - show all with their data
+          setMultipleResults(cachedResults.map(item => ({
+            domain: item.domain,
+            title: `${query} (${item.domain})`,
+            cached: true,
+            contactData: item,
+            snippet: ''
+          })));
+          setShowMultipleResults(true);
+          setIsLoading(false);
+          return;
         }
 
         // Step 2: Search for domains (can return multiple)
         setCurrentStep(`Searching for ${query}'s website...`);
         const companies = await searchCompanyDomains(query);
 
+        if (companies.length === 0) {
+          throw new Error('No results found for this company');
+        }
+
         if (companies.length === 1) {
-          // Single result - proceed directly
+          // Single result - extract and show directly
           await processCompany(query, companies[0]);
         } else {
-          // Multiple results - show selector
-          setCompanyOptions(companies);
-          setShowCompanySelector(true);
-          setIsLoading(false);
+          // Multiple results - extract contact info for ALL of them
+          setCurrentStep('Extracting contact information from all matches...');
+          const extractedResults = [];
+          
+          for (let i = 0; i < companies.length; i++) {
+            const company = companies[i];
+            try {
+              setCurrentStep(`Extracting from ${company.domain} (${i + 1}/${companies.length})...`);
+              
+              // Generate candidate URLs
+              const candidateUrls = generateContactUrls(company.domain);
+              
+              // Find working URL
+              const workingUrl = await findWorkingUrl(candidateUrls);
+              
+              // Extract contacts
+              const data = await extractContactsFromUrl(workingUrl);
+              
+              // Save to cache
+              await saveToCache(query, company.domain, data);
+              
+              extractedResults.push({
+                domain: company.domain,
+                title: company.title,
+                cached: false,
+                contactData: data,
+                snippet: company.snippet
+              });
+            } catch (err) {
+              console.error(`Failed to extract from ${company.domain}:`, err);
+              // Still add to results but mark as failed
+              extractedResults.push({
+                domain: company.domain,
+                title: company.title,
+                cached: false,
+                contactData: null,
+                error: err.message,
+                snippet: company.snippet
+              });
+            }
+          }
+          
+          setMultipleResults(extractedResults);
+          setShowMultipleResults(true);
+          await loadHistory();
         }
       }
     } catch (err) {
       console.error('Search error:', err);
       setError(err.message || 'An error occurred while searching');
-      setIsLoading(false);
       setCurrentStep('');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -114,6 +175,7 @@ function App() {
     try {
       setIsLoading(true);
       setShowCompanySelector(false);
+      setShowMultipleResults(false);
       
       // If cached data is available
       if (company.cached && company.data) {
@@ -151,6 +213,10 @@ function App() {
     }
   };
 
+  const handleMultipleResultSelect = async (result) => {
+    await processCompany(searchQuery, result);
+  };
+
   const handleCompanySelect = async (company) => {
     await processCompany(searchQuery, company);
   };
@@ -165,6 +231,7 @@ function App() {
     setError(null);
     setContactData(null);
     setShowCompanySelector(false);
+    setShowMultipleResults(false);
     setShowBulkResults(false);
     setBulkProgress({ total: companyNames.length, completed: 0, current: '' });
     setBulkResults([]);
@@ -186,7 +253,6 @@ function App() {
             source_url: cached.source_url,
             email: cached.email || [],
             phone: cached.phone || [],
-            address: cached.address || '',
             socials: cached.socials || {},
             success: true,
             cached: true
@@ -227,7 +293,6 @@ function App() {
           source_url: data.source_url,
           email: data.email || [],
           phone: data.phone || [],
-          address: data.address || '',
           socials: data.socials || {},
           success: true,
           cached: false
@@ -279,6 +344,26 @@ function App() {
     setBulkResultsData([]);
   };
 
+  const handleNewSearch = () => {
+    setContactData(null);
+    setError(null);
+    setSearchQuery('');
+    setShowMultipleResults(false);
+    setShowBulkResults(false);
+    setMultipleResults([]);
+    setActiveView('single');
+  };
+
+  const handleBulkSearchView = () => {
+    setContactData(null);
+    setError(null);
+    setSearchQuery('');
+    setShowMultipleResults(false);
+    setShowBulkResults(false);
+    setMultipleResults([]);
+    setActiveView('bulk');
+  };
+
   return (
     <>
       {showBulkResults ? (
@@ -287,98 +372,159 @@ function App() {
           onBack={handleBackToDashboard}
         />
       ) : (
-        <div className="min-h-screen bg-white py-12 px-4">
-          <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <header className="text-center mb-12">
-          <h1 className="text-5xl font-bold text-gray-900 mb-3">
-            Contact Extractor
-          </h1>
-          <p className="text-lg text-gray-600">
-            Enter a company name or contact page URL
-          </p>
-        </header>
-
-        {/* Search Input */}
-        <SearchInput 
-          onSearch={handleSearch} 
-          onBulkUpload={handleBulkUpload}
-          isLoading={isLoading || isBulkProcessing} 
-        />
-
-        {/* Error Message */}
-        {error && (
-          <div className="w-full max-w-2xl mx-auto mt-6">
-            <div className="bg-white border-2 border-gray-400 rounded-lg p-4">
-              <div className="flex items-center gap-3">
-                <svg className="w-5 h-5 text-gray-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p className="text-gray-800">{error}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Company Selector */}
-        {showCompanySelector && (
-          <CompanySelector 
-            companies={companyOptions}
-            onSelect={handleCompanySelect}
-            onCancel={() => {
-              setShowCompanySelector(false);
-              setCompanyOptions([]);
-            }}
+        <div className="flex min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+          {/* Sidebar */}
+          <Sidebar
+            onNewSearch={handleNewSearch}
+            onBulkSearch={handleBulkSearchView}
+            isOpen={sidebarOpen}
+            onToggle={() => setSidebarOpen(!sidebarOpen)}
+            activeView={activeView}
           />
-        )}
 
-        {/* Bulk Progress */}
-        {isBulkProcessing && (
-          <BulkProgress 
-            total={bulkProgress.total}
-            completed={bulkProgress.completed}
-            current={bulkProgress.current}
-            results={bulkResults}
-          />
-        )}
+          {/* Main Content */}
+          <main className="flex-1 py-8 px-4 md:px-8 md:py-12">
+            <div className="max-w-6xl mx-auto">
+              {/* Header */}
+              {!showMultipleResults && !contactData && (
+                <header className="text-center mb-12 mt-12 md:mt-0">
+                  <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-3">
+                    {activeView === 'bulk' ? 'Bulk Contact Extraction' : 'Contact Finder'}
+                  </h1>
+                  <p className="text-base md:text-lg text-gray-600">
+                    {activeView === 'bulk' 
+                      ? 'Upload a file with multiple company names' 
+                      : 'Enter a company name or contact page URL'}
+                  </p>
+                </header>
+              )}
 
-        {/* Extraction Status */}
-        {isLoading && <ExtractionStatus step={currentStep} query={searchQuery} />}
+              {/* Search Input */}
+              {!showMultipleResults && !contactData && (
+                <SearchInput 
+                  onSearch={handleSearch} 
+                  onBulkUpload={handleBulkUpload}
+                  isLoading={isLoading || isBulkProcessing}
+                  showBulkOnly={activeView === 'bulk'}
+                />
+              )}
 
-        {/* Contact Dashboard */}
-        {contactData && <ContactDashboard data={contactData} isCached={isCached} />}
+              {/* Error Message */}
+              {error && (
+                <div className="w-full max-w-2xl mx-auto mt-6">
+                  <div className="bg-white border-2 border-red-400 rounded-lg p-4">
+                    <div className="flex items-center gap-3">
+                      <svg className="w-5 h-5 text-red-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <p className="text-red-800">{error}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
-        {/* Search History */}
-        {!isLoading && !isBulkProcessing && !contactData && !showCompanySelector && history.length > 0 && (
-          <SearchHistory history={history} onSelectCompany={handleHistoryClick} />
-        )}
+              {/* Multiple Results Page */}
+              {showMultipleResults && (
+                <MultipleResultsPage
+                  results={multipleResults}
+                  searchQuery={searchQuery}
+                  onBack={() => {
+                    setShowMultipleResults(false);
+                    setMultipleResults([]);
+                    setContactData(null);
+                  }}
+                />
+              )}
 
-        {/* Instructions */}
-        {!isLoading && !isBulkProcessing && !contactData && !showCompanySelector && !error && history.length === 0 && (
-          <div className="w-full max-w-2xl mx-auto mt-12">
-            <div className="bg-white rounded-lg shadow-md p-6 border-2 border-black">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                How to use:
-              </h3>
-              <ol className="space-y-2 text-gray-600">
-                <li className="flex items-start gap-2">
-                  <span className="font-semibold text-gray-900">1.</span>
-                  <span>Enter a company name (e.g., "Tesla") OR a contact page URL</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="font-semibold text-gray-900">2.</span>
-                  <span>Click "Search"</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="font-semibold text-gray-900">3.</span>
-                  <span>View extracted emails, phones, address, and social links</span>
-                </li>
-              </ol>
+              {/* Company Selector */}
+              {showCompanySelector && (
+                <CompanySelector 
+                  companies={companyOptions}
+                  onSelect={handleCompanySelect}
+                  onCancel={() => {
+                    setShowCompanySelector(false);
+                    setCompanyOptions([]);
+                  }}
+                />
+              )}
+
+              {/* Bulk Progress */}
+              {isBulkProcessing && (
+                <BulkProgress 
+                  total={bulkProgress.total}
+                  completed={bulkProgress.completed}
+                  current={bulkProgress.current}
+                  results={bulkResults}
+                />
+              )}
+
+              {/* Extraction Status */}
+              {isLoading && <ExtractionStatus step={currentStep} query={searchQuery} />}
+
+              {/* Contact Dashboard */}
+              {contactData && (
+                <div>
+                  <button
+                    onClick={handleNewSearch}
+                    className="mb-6 flex items-center gap-2 px-4 py-2 text-gray-700 hover:text-black hover:bg-gray-100 rounded-lg transition-all duration-300"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                    Back to Search
+                  </button>
+                  <ContactDashboard data={contactData} isCached={isCached} />
+                </div>
+              )}
+
+              {/* Search History */}
+              {!isLoading && !isBulkProcessing && !contactData && !showCompanySelector && !showMultipleResults && history.length > 0 && (
+                <SearchHistory history={history} onSelectCompany={handleHistoryClick} />
+              )}
+
+              {/* Instructions */}
+              {!isLoading && !isBulkProcessing && !contactData && !showCompanySelector && !showMultipleResults && !error && history.length === 0 && (
+                <div className="w-full max-w-2xl mx-auto mt-12">
+                  <div className="bg-white rounded-xl shadow-lg p-8 border border-gray-200">
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="p-3 bg-black rounded-lg">
+                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </div>
+                      <h3 className="text-xl font-bold text-gray-900">
+                        How to use
+                      </h3>
+                    </div>
+                    <ol className="space-y-4 text-gray-700">
+                      <li className="flex items-start gap-3">
+                        <span className="flex-shrink-0 w-8 h-8 bg-black text-white rounded-full flex items-center justify-center font-bold text-sm">1</span>
+                        <div>
+                          <p className="font-semibold text-gray-900">Enter company name or URL</p>
+                          <p className="text-sm text-gray-600 mt-1">Search for "Tesla" or paste a contact page URL</p>
+                        </div>
+                      </li>
+                      <li className="flex items-start gap-3">
+                        <span className="flex-shrink-0 w-8 h-8 bg-black text-white rounded-full flex items-center justify-center font-bold text-sm">2</span>
+                        <div>
+                          <p className="font-semibold text-gray-900">Automatic extraction</p>
+                          <p className="text-sm text-gray-600 mt-1">We'll find and extract contact information from all matching websites</p>
+                        </div>
+                      </li>
+                      <li className="flex items-start gap-3">
+                        <span className="flex-shrink-0 w-8 h-8 bg-black text-white rounded-full flex items-center justify-center font-bold text-sm">3</span>
+                        <div>
+                          <p className="font-semibold text-gray-900">Get results</p>
+                          <p className="text-sm text-gray-600 mt-1">View emails, phone numbers, and social media links</p>
+                        </div>
+                      </li>
+                    </ol>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
-      </div>
-    </div>
+          </main>
+        </div>
       )}
     </>
   );

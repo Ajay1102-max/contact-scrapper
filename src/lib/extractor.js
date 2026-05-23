@@ -44,14 +44,12 @@ export async function extractContactsFromUrl(url) {
   // Extract contact information using improved patterns
   const emails = extractEmails(content);
   const phones = extractPhones(content);
-  const address = extractAddress(content);
   const socials = extractSocialLinks(content);
 
   return {
     source_url: url,
     email: emails,
     phone: phones,
-    address: address,
     socials: socials
   };
 }
@@ -76,7 +74,10 @@ function extractEmails(text) {
            !lower.includes('@placeholder') &&
            !lower.endsWith('.png') &&
            !lower.endsWith('.jpg') &&
-           !lower.endsWith('.gif');
+           !lower.endsWith('.gif') &&
+           !lower.includes('noreply') &&
+           !lower.includes('no-reply') &&
+           !lower.includes('donotreply');
   });
   
   // Remove duplicates (case-insensitive)
@@ -85,108 +86,108 @@ function extractEmails(text) {
 }
 
 /**
- * Extract phone numbers with improved validation
+ * Extract phone numbers with strict validation
+ * Only extracts proper phone numbers, avoiding false positives
  */
 function extractPhones(text) {
   const phones = new Set();
   
-  // Pattern 1: International format with + and country code
-  const intlPattern = /\+\d{1,3}[\s.-]?\(?\d{1,4}\)?[\s.-]?\d{1,4}[\s.-]?\d{1,4}[\s.-]?\d{1,4}/g;
+  // Look for phone number indicators in context
+  const phoneContextPattern = /(?:phone|tel|call|mobile|fax|contact|telephone)[\s:]*([+\d\s().-]{10,20})/gi;
+  const contextMatches = [...text.matchAll(phoneContextPattern)];
+  
+  contextMatches.forEach(match => {
+    const phone = match[1].trim();
+    if (isValidPhoneNumber(phone)) {
+      phones.add(normalizePhone(phone));
+    }
+  });
+  
+  // Pattern 1: International format with + (most reliable)
+  // +1-234-567-8900 or +44 20 7946 0958
+  const intlPattern = /\+\d{1,3}[\s.-]?\(?\d{2,4}\)?[\s.-]?\d{2,4}[\s.-]?\d{2,4}(?:[\s.-]?\d{1,4})?/g;
   const intlMatches = text.match(intlPattern) || [];
   intlMatches.forEach(phone => {
-    const cleaned = phone.replace(/\s+/g, ' ').trim();
-    if (cleaned.length >= 10) phones.add(cleaned);
-  });
-  
-  // Pattern 2: US/Canada format (XXX) XXX-XXXX or XXX-XXX-XXXX
-  const usPattern = /\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g;
-  const usMatches = text.match(usPattern) || [];
-  usMatches.forEach(phone => {
-    const cleaned = phone.replace(/\s+/g, ' ').trim();
-    // Validate it's not a coordinate or date
-    if (!isCoordinate(cleaned) && !isDate(cleaned) && hasVariedDigits(cleaned)) {
-      phones.add(cleaned);
+    if (isValidPhoneNumber(phone)) {
+      phones.add(normalizePhone(phone));
     }
   });
   
-  // Pattern 3: International without + (country code followed by number)
-  const intlNoPlus = /\b\d{1,3}[\s.-]\d{2,4}[\s.-]\d{2,4}[\s.-]\d{2,4}\b/g;
-  const intlNoPlusMatches = text.match(intlNoPlus) || [];
-  intlNoPlusMatches.forEach(phone => {
-    const cleaned = phone.replace(/\s+/g, ' ').trim();
-    if (!isCoordinate(cleaned) && !isDate(cleaned) && hasVariedDigits(cleaned) && cleaned.length >= 10) {
-      phones.add(cleaned);
+  // Pattern 2: Standard formats with clear separators
+  // (123) 456-7890 or 123-456-7890 or 123.456.7890
+  const standardPattern = /\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/g;
+  const standardMatches = text.match(standardPattern) || [];
+  standardMatches.forEach(phone => {
+    if (isValidPhoneNumber(phone) && !looksLikeNonPhone(phone)) {
+      phones.add(normalizePhone(phone));
     }
   });
   
-  return Array.from(phones);
+  return Array.from(phones).filter(phone => phone.length >= 10);
 }
 
 /**
- * Check if string is a coordinate (latitude/longitude)
+ * Validate if string is a proper phone number
  */
-function isCoordinate(str) {
-  // Coordinates have decimal points and are typically in pairs
-  const coordPattern = /^\d+\.\d+$/;
-  return coordPattern.test(str.replace(/[\s.-]/g, ''));
-}
-
-/**
- * Check if string looks like a date
- */
-function isDate(str) {
-  // Common date patterns
-  const datePatterns = [
-    /^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/,  // MM/DD/YYYY or DD-MM-YYYY
-    /^\d{4}[\/-]\d{1,2}[\/-]\d{1,2}$/,    // YYYY-MM-DD
-  ];
-  return datePatterns.some(pattern => pattern.test(str));
-}
-
-/**
- * Check if phone number has varied digits (not all same)
- */
-function hasVariedDigits(str) {
+function isValidPhoneNumber(str) {
   const digits = str.replace(/\D/g, '');
-  if (digits.length < 7) return false;
   
-  // Check if all digits are the same (like 111-111-1111)
-  const firstDigit = digits[0];
-  return !digits.split('').every(d => d === firstDigit);
+  // Must have 7-15 digits
+  if (digits.length < 7 || digits.length > 15) return false;
+  
+  // Must not be all same digit (111-111-1111)
+  if (/^(\d)\1+$/.test(digits)) return false;
+  
+  // Must not be sequential (123-456-7890)
+  if (isSequential(digits)) return false;
+  
+  // Must have variation in digits
+  const uniqueDigits = new Set(digits.split(''));
+  if (uniqueDigits.size < 3) return false;
+  
+  return true;
 }
 
 /**
- * Extract physical address with improved pattern
+ * Check if digits are sequential
  */
-function extractAddress(text) {
-  // Look for common address patterns
-  const addressPatterns = [
-    // Pattern 1: Street number + street name + city + state + zip
-    /\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Circle|Cir|Place|Pl)[,\s]+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*[,\s]+[A-Z]{2}\s+\d{5}(?:-\d{4})?/gi,
-    
-    // Pattern 2: PO Box
-    /P\.?O\.?\s+Box\s+\d+[,\s]+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*[,\s]+[A-Z]{2}\s+\d{5}(?:-\d{4})?/gi,
-    
-    // Pattern 3: International format (number, street, city, country)
-    /\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*[,\s]+\d{5,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*/gi
-  ];
-
-  for (const pattern of addressPatterns) {
-    const matches = text.match(pattern);
-    if (matches && matches.length > 0) {
-      // Return the first valid address found
-      return matches[0].trim();
+function isSequential(digits) {
+  if (digits.length < 7) return false;
+  let sequential = 0;
+  for (let i = 1; i < digits.length; i++) {
+    if (parseInt(digits[i]) === parseInt(digits[i-1]) + 1) {
+      sequential++;
+      if (sequential >= 5) return true;
+    } else {
+      sequential = 0;
     }
   }
+  return false;
+}
 
-  // Fallback: Look for "Address:" label
-  const addressLabel = /(?:Address|Location|Office):\s*([^\n]{20,150})/i;
-  const labelMatch = text.match(addressLabel);
-  if (labelMatch) {
-    return labelMatch[1].trim();
-  }
+/**
+ * Check if string looks like something other than a phone
+ */
+function looksLikeNonPhone(str) {
+  // Check for date patterns
+  if (/^\d{2,4}[-\/]\d{1,2}[-\/]\d{1,2}$/.test(str)) return true;
+  
+  // Check for coordinates (decimal numbers)
+  if (/\d+\.\d+/.test(str) && str.split('.').length > 2) return true;
+  
+  // Check for IDs or codes (too many digits without separators)
+  const digits = str.replace(/\D/g, '');
+  if (digits.length > 12) return true;
+  
+  return false;
+}
 
-  return null;
+/**
+ * Normalize phone number format
+ */
+function normalizePhone(phone) {
+  // Keep the original format but clean up extra spaces
+  return phone.replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -221,6 +222,13 @@ function extractSocialLinks(text) {
     ],
     pinterest: [
       /https?:\/\/(?:www\.)?pinterest\.com\/[a-zA-Z0-9_]+/gi
+    ],
+    github: [
+      /https?:\/\/(?:www\.)?github\.com\/[a-zA-Z0-9_-]+/gi
+    ],
+    whatsapp: [
+      /https?:\/\/(?:www\.)?wa\.me\/\d+/gi,
+      /https?:\/\/(?:www\.)?whatsapp\.com\/[a-zA-Z0-9._-]+/gi
     ]
   };
 
